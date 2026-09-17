@@ -66,3 +66,20 @@ export function mapNotionPageToAgentLog(page: any): AgentLogEntry {
     initiativeId: getRelation(page.properties.Initiative)[0] || ''
   };
 }
+
+export function getUrl(property: any): string {
+  return property?.url || '';
+}
+
+export function mapNotionPageToActionEntry(page: any): ActionEntry {
+  return {
+    id: page.id,
+    title: getTitle(page.properties.Title),
+    tool: getSelect(page.properties.Tool) as any,
+    link: getUrl(page.properties.Link),
+    performedBy: getSelect(page.properties['Performed By']) as AgentName,
+    initiativeId: getRelation(page.properties.Initiative)[0] || '',
+    timestamp: getDate(page.properties.Timestamp) || page.created_time || ''
+  };
+}
+

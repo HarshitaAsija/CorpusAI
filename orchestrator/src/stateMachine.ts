@@ -402,66 +402,103 @@ export class OrchestratorFSM {
       initiativeId: initiative.id
     });
 
-    // 2. Perform GitHub Action & Slack Action in parallel (Promise.all)
+    // 2. Perform GitHub Action & Slack Action in parallel with isolated error handling
     console.log('[FSM] Firing real-world side effects (GitHub & Slack) in parallel...');
 
-    const githubPromise = (async () => {
-      const issueUrl = await createGitHubIssue(engResponse.title, engResponse.body);
-      console.log(`[FSM] GitHub Issue created successfully: ${issueUrl}`);
-      
-      await this.notion.createAction('engineering', {
-        title: `GitHub Issue Created: "${engResponse.title}"`,
-        tool: 'GitHub',
-        link: issueUrl,
-        performedBy: 'Engineering',
-        initiativeId: initiative.id
-      });
+    let githubSucceeded = false;
+    let slackSucceeded = false;
 
-      await this.notion.createAgentLog('engineering', {
-        agent: 'Engineering',
-        eventType: 'Action',
-        summary: `Created GitHub Issue for deliverables`,
-        reasoning: `Issue URL: ${issueUrl}`,
-        initiativeId: initiative.id
-      });
+    const githubPromise = (async () => {
+      try {
+        const issueUrl = await createGitHubIssue(engResponse.title, engResponse.body);
+        console.log(`[FSM] GitHub Issue created successfully: ${issueUrl}`);
+        
+        await this.notion.createAction('engineering', {
+          title: `GitHub Issue Created: "${engResponse.title}"`,
+          tool: 'GitHub',
+          link: issueUrl,
+          performedBy: 'Engineering',
+          initiativeId: initiative.id
+        });
+
+        await this.notion.createAgentLog('engineering', {
+          agent: 'Engineering',
+          eventType: 'Action',
+          summary: `Created GitHub Issue for deliverables`,
+          reasoning: `Issue URL: ${issueUrl}`,
+          initiativeId: initiative.id
+        });
+        githubSucceeded = true;
+      } catch (err: any) {
+        console.error(`[FSM] GitHub Issue creation failed: ${err.message}`);
+        await this.notion.createAgentLog('engineering', {
+          agent: 'Engineering',
+          eventType: 'Error',
+          summary: `GitHub Action Failed: ${err.message}`,
+          reasoning: `Encountered error while creating GitHub issue: ${err.stack || err.message}`,
+          initiativeId: initiative.id
+        });
+      }
     })();
 
     const slackPromise = (async () => {
-      const slackMessage = `🚀 *New Campaign Launched!*\n*Campaign Name*: ${initiative.name}\n*Budget*: $${approvedBudget}\n*Justification*: ${justification}\n*Plan*: The Engineering team is working on the landing page!`;
-      const slackUrl = await postSlackMessage(slackMessage);
-      console.log(`[FSM] Slack announcement posted successfully: ${slackUrl}`);
+      try {
+        const slackMessage = `🚀 *New Campaign Launched!*\n*Campaign Name*: ${initiative.name}\n*Budget*: $${approvedBudget}\n*Justification*: ${justification}\n*Plan*: The Engineering team is working on the landing page!`;
+        const slackUrl = await postSlackMessage(slackMessage);
+        console.log(`[FSM] Slack announcement posted successfully: ${slackUrl}`);
 
-      await this.notion.createAction('orchestrator', {
-        title: `Slack Announcement Posted`,
-        tool: 'Slack',
-        link: slackUrl,
-        performedBy: 'Marketing',
-        initiativeId: initiative.id
-      });
+        await this.notion.createAction('orchestrator', {
+          title: `Slack Announcement Posted`,
+          tool: 'Slack',
+          link: slackUrl,
+          performedBy: 'Marketing',
+          initiativeId: initiative.id
+        });
 
-      await this.notion.createAgentLog('marketing', {
-        agent: 'Marketing',
-        eventType: 'Action',
-        summary: `Posted Slack announcement`,
-        reasoning: `Message permalink: ${slackUrl}`,
-        initiativeId: initiative.id
-      });
+        await this.notion.createAgentLog('marketing', {
+          agent: 'Marketing',
+          eventType: 'Action',
+          summary: `Posted Slack announcement`,
+          reasoning: `Message permalink: ${slackUrl}`,
+          initiativeId: initiative.id
+        });
+        slackSucceeded = true;
+      } catch (err: any) {
+        console.error(`[FSM] Slack announcement failed: ${err.message}`);
+        await this.notion.createAgentLog('marketing', {
+          agent: 'Marketing',
+          eventType: 'Error',
+          summary: `Slack Action Failed: ${err.message}`,
+          reasoning: `Encountered error while posting Slack announcement: ${err.stack || err.message}`,
+          initiativeId: initiative.id
+        });
+      }
     })();
 
     // Wait for both side-effects to complete
     await Promise.all([githubPromise, slackPromise]);
 
+    if (!githubSucceeded && !slackSucceeded) {
+      throw new Error('Both GitHub and Slack executions failed. Please verify credentials in .env.');
+    }
+
     // 3. Mark Initiative as Done
-    console.log(`[FSM] All actions executed. Completing Initiative: ${initiative.id}`);
+    console.log(`[FSM] Actions execution resolved. Completing Initiative: ${initiative.id}`);
     
+    const executionSummary = (githubSucceeded && slackSucceeded)
+      ? 'All actions (GitHub issue and Slack post) were fired and linked back to Notion. Initiative complete.'
+      : (githubSucceeded
+        ? 'GitHub issue was created successfully, but Slack notification encountered an error. Check Agent Logs for details.'
+        : 'Slack announcement posted successfully, but GitHub issue creation encountered an error. Check Agent Logs for details.');
+
     await this.notion.createAgentLog('orchestrator', {
       agent: 'Orchestrator',
       eventType: 'Resolution',
-      summary: 'Initiative completed successfully',
-      reasoning: 'All actions (GitHub issue and Slack post) were fired and linked back to Notion. Initiative complete.',
+      summary: 'Initiative completed execution',
+      reasoning: executionSummary,
       initiativeId: initiative.id
     });
 
-    await this.notion.updateInitiativeStatus(initiative.id, 'Done', `Initiative completed successfully. GitHub issue and Slack announcement posted.`);
+    await this.notion.updateInitiativeStatus(initiative.id, 'Done', `Initiative completed: ${executionSummary}`);
   }
 }

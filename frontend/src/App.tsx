@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Award, FileText, CheckCircle2, AlertCircle, RefreshCw, MessageSquare, Terminal, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Award, FileText, CheckCircle2, AlertCircle, RefreshCw, MessageSquare, Terminal, ChevronDown, ChevronUp, ExternalLink, AlertTriangle } from 'lucide-react';
 import AnimatedBackground from './AnimatedBackground';
 import LineageGraph from './components/LineageGraph';
 import AnalyticsPanel from './components/AnalyticsPanel';
@@ -36,10 +36,21 @@ interface AgentLog {
   initiativeId: string;
 }
 
+interface ActionItem {
+  id?: string;
+  title: string;
+  tool: 'GitHub' | 'Slack' | 'Calendar' | 'Email';
+  link: string;
+  performedBy: string;
+  initiativeId: string;
+  timestamp: string;
+}
+
 export default function App() {
   const [initiatives, setInitiatives] = useState<Initiative[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [logs, setLogs] = useState<AgentLog[]>([]);
+  const [actions, setActions] = useState<ActionItem[]>([]);
   const [activeInitiativeId, setActiveInitiativeId] = useState<string | null>(null);
   const [parentPageId, setParentPageId] = useState<string>('');
   const [graphData, setGraphData] = useState<any>(null);
@@ -91,6 +102,22 @@ export default function App() {
     }
   };
 
+  // Fetch real deliverables / actions executed for a specific initiative
+  const fetchActions = async (initiativeId?: string) => {
+    try {
+      const url = initiativeId
+        ? `${API_URL}/api/initiatives/${initiativeId}/actions`
+        : `${API_URL}/api/actions`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setActions(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch actions:', err);
+    }
+  };
+
   // Fetch all initiatives and decisions
   const fetchData = async () => {
     try {
@@ -112,6 +139,7 @@ export default function App() {
         setActiveInitiativeId(initData[0].id);
         fetchGraphData(initData[0].id);
         fetchLogs(initData[0].id);
+        fetchActions(initData[0].id);
       }
       
       setError(null);
@@ -145,6 +173,7 @@ export default function App() {
         if (data.type === 'fsm-update' && data.initiativeId === activeInitiativeId) {
           fetchData();
           fetchGraphData(data.initiativeId);
+          fetchActions(data.initiativeId);
           if (data.eventType === 'log' && data.log) {
             setLogs(prev => {
               if (prev.some(l => l.id === data.log.id)) return prev;
@@ -168,6 +197,14 @@ export default function App() {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    if (activeInitiativeId) {
+      fetchLogs(activeInitiativeId);
+      fetchGraphData(activeInitiativeId);
+      fetchActions(activeInitiativeId);
+    }
+  }, [activeInitiativeId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -190,6 +227,7 @@ export default function App() {
       
       if (result.initiativeId) {
         fetchGraphData(result.initiativeId);
+        fetchActions(result.initiativeId);
       }
       await fetchData();
     } catch (err: any) {
@@ -426,6 +464,70 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                {/* Deliverables / Proof of Execution */}
+                {actions.length > 0 && (
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--accent-green)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <CheckCircle2 size={18} color="var(--accent-green)" />
+                      Deliverables &amp; Proof of Execution:
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      {actions.map((act) => (
+                        <div key={act.id || act.link} style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '0.85rem 1rem',
+                          background: 'rgba(16, 185, 129, 0.08)',
+                          border: '1px solid rgba(16, 185, 129, 0.25)',
+                          borderRadius: '8px'
+                        }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                              <span style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                padding: '0.15rem 0.45rem',
+                                borderRadius: '4px',
+                                background: act.tool === 'GitHub' ? '#24292e' : '#4a154b',
+                                color: '#ffffff'
+                              }}>
+                                {act.tool}
+                              </span>
+                              <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                {act.title}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              Executed by {act.performedBy} • {act.timestamp ? new Date(act.timestamp).toLocaleTimeString() : 'Just now'}
+                            </span>
+                          </div>
+                          {act.link && (
+                            <a
+                              href={act.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.35rem',
+                                padding: '0.4rem 0.75rem',
+                                borderRadius: '6px',
+                                background: 'var(--accent-indigo)',
+                                color: '#ffffff',
+                                textDecoration: 'none',
+                                fontSize: '0.8rem',
+                                fontWeight: 600
+                              }}
+                            >
+                              View Output <ExternalLink size={14} />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="glass-card" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', flexDirection: 'column', color: 'var(--text-secondary)' }}>
@@ -443,17 +545,23 @@ export default function App() {
                 </h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', padding: '0.5rem' }}>
                   {logs.map((log) => {
+                    const isError = log.eventType === 'Error';
                     const isOrchestrator = log.agent === 'Orchestrator';
                     const isMarketing = log.agent === 'Marketing';
                     const isFinance = log.agent === 'Finance';
                     const isEngineering = log.agent === 'Engineering';
 
                     let avatarBg = 'rgba(255, 255, 255, 0.1)';
-                    let avatarColor = '#off';
+                    let avatarColor = '#fff';
                     let bubbleBg = 'rgba(255, 255, 255, 0.03)';
                     let borderColor = 'rgba(255, 255, 255, 0.08)';
 
-                    if (isOrchestrator) {
+                    if (isError) {
+                      avatarBg = 'rgba(239, 68, 68, 0.25)';
+                      avatarColor = '#f87171';
+                      bubbleBg = 'rgba(239, 68, 68, 0.08)';
+                      borderColor = 'rgba(239, 68, 68, 0.35)';
+                    } else if (isOrchestrator) {
                       avatarBg = 'rgba(129, 140, 248, 0.2)';
                       avatarColor = '#a5b4fc';
                       bubbleBg = 'rgba(129, 140, 248, 0.05)';
@@ -492,7 +600,7 @@ export default function App() {
                           fontSize: '0.85rem',
                           flexShrink: 0
                         }}>
-                          {log.agent[0]}
+                          {isError ? '!' : log.agent[0]}
                         </div>
                         <div style={{
                           flex: 1,
@@ -503,12 +611,16 @@ export default function App() {
                           position: 'relative'
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: avatarColor }}>{log.agent}</span>
+                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: avatarColor, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                              {isError && <AlertTriangle size={14} color="#f87171" />}
+                              {log.agent}
+                              {isError && <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 'bold' }}>[ERROR]</span>}
+                            </span>
                             <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </span>
                           </div>
-                          <p style={{ fontSize: '0.9rem', color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                          <p style={{ fontSize: '0.9rem', color: isError ? '#fca5a5' : 'var(--text-primary)', lineHeight: '1.4' }}>
                             {log.summary}
                           </p>
                           {log.reasoning && (
@@ -615,6 +727,7 @@ export default function App() {
                       setActiveInitiativeId(init.id);
                       fetchGraphData(init.id);
                       fetchLogs(init.id);
+                      fetchActions(init.id);
                     }}
                     style={{ 
                       cursor: 'pointer', 

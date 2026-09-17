@@ -1,6 +1,6 @@
 import { Client } from '@notionhq/client';
 import { AgentName, AgentLogEntry, Decision, ActionEntry, Initiative } from '../types';
-import { mapNotionPageToInitiative, mapNotionPageToDecision, mapNotionPageToAgentLog } from './schemas';
+import { mapNotionPageToInitiative, mapNotionPageToDecision, mapNotionPageToAgentLog, mapNotionPageToActionEntry } from './schemas';
 
 export type AgentKey = 'marketing' | 'finance' | 'engineering' | 'orchestrator';
 
@@ -287,6 +287,39 @@ export class NotionClientWrapper {
           contains: initiativeId
         }
       }
+    });
+    return response.results.map(mapNotionPageToAgentLog);
+  }
+
+  async getAllActions(initiativeId?: string): Promise<ActionEntry[]> {
+    const agent = 'orchestrator';
+    const dbId = process.env.NOTION_ACTIONS_DB_ID!;
+    this.checkPermission(agent, dbId, 'getAllActions');
+
+    const queryParams: any = {
+      database_id: dbId
+    };
+
+    if (initiativeId) {
+      queryParams.filter = {
+        property: 'Initiative',
+        relation: {
+          contains: initiativeId
+        }
+      };
+    }
+
+    const response = await this.clients[agent].databases.query(queryParams);
+    return response.results.map(mapNotionPageToActionEntry);
+  }
+
+  async getAllAgentLogs(): Promise<AgentLogEntry[]> {
+    const agent = 'orchestrator';
+    const dbId = process.env.NOTION_AGENTLOG_DB_ID!;
+    this.checkPermission(agent, dbId, 'getAllAgentLogs');
+
+    const response = await this.clients[agent].databases.query({
+      database_id: dbId
     });
     return response.results.map(mapNotionPageToAgentLog);
   }
