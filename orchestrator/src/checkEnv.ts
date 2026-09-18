@@ -9,8 +9,16 @@ const CORE_SETUP_KEYS = [
   'NOTION_ORCHESTRATOR_TOKEN'
 ];
 
-const SERVER_KEYS = [
+const BASE_SERVER_KEYS = [
   'NVIDIA_API_KEY',
+  'GITHUB_TOKEN',
+  'GITHUB_REPO',
+  'SLACK_BOT_TOKEN',
+  'SLACK_CHANNEL_ID',
+  'WEBHOOK_SHARED_SECRET'
+];
+
+const NOTION_SERVER_KEYS = [
   'NOTION_PARENT_PAGE_ID',
   'NOTION_ORCHESTRATOR_TOKEN',
   'NOTION_MARKETING_TOKEN',
@@ -20,22 +28,55 @@ const SERVER_KEYS = [
   'NOTION_AGENTLOG_DB_ID',
   'NOTION_DECISIONS_DB_ID',
   'NOTION_ACTIONS_DB_ID',
-  'NOTION_POLICY_PAGE_ID',
-  'GITHUB_TOKEN',
-  'GITHUB_REPO',
-  'SLACK_BOT_TOKEN',
-  'SLACK_CHANNEL_ID',
-  'WEBHOOK_SHARED_SECRET'
+  'NOTION_POLICY_PAGE_ID'
 ];
 
 export function checkEnv(mode: 'setup' | 'server'): void {
-  const keysToCheck = mode === 'setup' ? CORE_SETUP_KEYS : SERVER_KEYS;
   const missingKeys: string[] = [];
 
-  for (const key of keysToCheck) {
-    const val = process.env[key];
-    if (!val || val.trim() === '') {
-      missingKeys.push(key);
+  if (mode === 'setup') {
+    for (const key of CORE_SETUP_KEYS) {
+      if (!process.env[key] || process.env[key]!.trim() === '') {
+        missingKeys.push(key);
+      }
+    }
+  } else {
+    // Server mode
+    const storageBackend = (process.env.STORAGE_BACKEND || 'notion').toLowerCase();
+
+    // Check base server keys
+    for (const key of BASE_SERVER_KEYS) {
+      if (!process.env[key] || process.env[key]!.trim() === '') {
+        missingKeys.push(key);
+      }
+    }
+
+    // Check storage-specific keys
+    if (storageBackend === 'postgres') {
+      if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+        missingKeys.push('DATABASE_URL');
+      }
+    } else {
+      // Default: Notion
+      for (const key of NOTION_SERVER_KEYS) {
+        if (!process.env[key] || process.env[key]!.trim() === '') {
+          missingKeys.push(key);
+        }
+      }
+    }
+
+    // Check approval-specific keys
+    if (process.env.APPROVAL_BACKEND === 'n8n') {
+      if (!process.env.N8N_APPROVAL_WEBHOOK_URL || process.env.N8N_APPROVAL_WEBHOOK_URL.trim() === '') {
+        console.warn('\x1b[33m[WARN] APPROVAL_BACKEND is set to "n8n", but N8N_APPROVAL_WEBHOOK_URL is not set.\x1b[0m');
+      }
+    }
+
+    // Check Cognee keys if enabled
+    if (process.env.COGNEE_ENABLED === 'true') {
+      if (!process.env.COGNEE_API_KEY || process.env.COGNEE_API_KEY.trim() === '') {
+        console.warn('\x1b[33m[WARN] COGNEE_ENABLED is "true", but COGNEE_API_KEY is not set.\x1b[0m');
+      }
     }
   }
 
@@ -47,7 +88,8 @@ export function checkEnv(mode: 'setup' | 'server'): void {
     console.error('\nPlease check your .env file and ensure these values are populated.');
     process.exit(1);
   } else {
-    console.log(`\x1b[32m[OK] Environment sanity check passed for '${mode}' mode.\x1b[0m`);
+    const backendLabel = (process.env.STORAGE_BACKEND || 'notion').toUpperCase();
+    console.log(`\x1b[32m[OK] Environment sanity check passed for '${mode}' mode (Storage: ${backendLabel}).\x1b[0m`);
   }
 }
 

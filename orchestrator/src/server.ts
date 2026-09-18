@@ -5,6 +5,7 @@ import * as path from 'path';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { checkEnv } from './checkEnv';
+import { getStorageClient, IStorageClient } from './storage';
 import { NotionClientWrapper } from './notion/client';
 import { OrchestratorFSM, processingInitiatives } from './stateMachine';
 
@@ -38,10 +39,11 @@ function broadcastEvent(event: any) {
   });
 }
 
-const notion = new NotionClientWrapper();
+const storage: IStorageClient = getStorageClient();
+const notion = storage;
 const fsm = new OrchestratorFSM((event) => {
   broadcastEvent(event);
-});
+}, storage);
 
 /**
  * GET /api/config
@@ -335,6 +337,50 @@ app.post('/webhooks/notion', async (req, res) => {
   }
 });
 
+/**
+ * Endpoint for n8n approval callbacks (instant resume, eliminating 15s polling delay).
+ * Payload: { decisionId, initiativeId, status: 'Approved' | 'Rejected', decidedBy?: string, secret?: string }
+ */
+app.post('/webhooks/approval', async (req, res) => {
+  const secret = req.headers['x-webhook-secret'] || req.query.secret || req.body.secret;
+  const expectedSecret = process.env.WEBHOOK_SHARED_SECRET;
+
+  if (expectedSecret && secret !== expectedSecret) {
+    console.warn('[Security Warn] n8n approval webhook secret verification failed.');
+    return res.status(401).json({ error: 'Unauthorized: Webhook secret verification failed.' });
+  }
+
+  const { decisionId, initiativeId, status, decidedBy } = req.body;
+  if (!decisionId || !status) {
+    return res.status(400).json({ error: 'Missing decisionId or status in payload' });
+  }
+
+  try {
+    console.log(`[n8n Webhook] Received approval callback for Decision ${decisionId}: status -> ${status}`);
+    await storage.updateDecisionStatus(decisionId, status, decidedBy || 'n8n Approval Workflow');
+
+    // Determine target initiative
+    let targetInitId = initiativeId;
+    if (!targetInitId) {
+      const allDecisions = await storage.getAllDecisions();
+      const match = allDecisions.find(d => d.id === decisionId);
+      if (match) targetInitId = match.initiativeId;
+    }
+
+    if (targetInitId) {
+      console.log(`[n8n Webhook] Instantly signaling FSM for initiative: ${targetInitId}`);
+      fsm.run(targetInitId).catch(err => {
+        console.error('[n8n Webhook] Background FSM resume error:', err);
+      });
+    }
+
+    return res.status(200).json({ success: true, message: 'FSM resumed via n8n approval webhook' });
+  } catch (error: any) {
+    console.error('[n8n Webhook Error] Processing approval webhook failed:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Start the server
 server.listen(port, () => {
   console.log(`\x1b[32m✔ CorpusAI Orchestrator listening on port ${port}\x1b[0m`);
@@ -346,22 +392,18 @@ server.listen(port, () => {
 /**
  * Fallback polling mechanism: polls the Decisions database every 15 seconds to check if
  * human approvals have changed, resuming the FSM without requiring webhooks.
+ * When APPROVAL_BACKEND === 'n8n', this loop is disabled in favor of instant webhook callbacks.
  */
 function startPollingFallback() {
+  if (process.env.APPROVAL_BACKEND === 'n8n') {
+    console.log('[Polling Fallback] APPROVAL_BACKEND is set to "n8n". 15s polling fallback is disabled in favor of instant webhook callbacks.');
+    return;
+  }
+
   console.log('[Polling Fallback] Starting background DB scanner (checks every 15s)...');
   
   setInterval(async () => {
     try {
-      // Get all pending decisions in Notion
-      const pendingDecisions = await notion.getPendingDecisions();
-      
-      // If we poll and see a decision is NO LONGER pending in our DB but we find approved/rejected,
-      // wait: getPendingDecisions() filters by Status = 'Pending'.
-      // To see if any decision was APPROVED or REJECTED recently, we query recently updated decisions.
-      // But wait! If we query recently approved decisions, how do we know if we already processed them?
-      // In a real system, the FSM state changes the initiative status.
-      // If initiative status is 'Awaiting Approval' and we find an approved decision linked to it, we resume!
-      // Let's implement this logic:
       const recentApproved = await notion.getRecentApprovedDecisions();
       
       for (const decision of recentApproved) {
@@ -378,7 +420,6 @@ function startPollingFallback() {
         const initiative = await notion.getInitiative(decision.initiativeId);
         if (initiative.status === 'Awaiting Approval') {
           console.log(`[Polling Fallback] Found approved decision for initiative ${initiative.id}. Resuming FSM...`);
-          // Resume the FSM!
           fsm.run(initiative.id).catch(err => {
             console.error('[Polling Fallback] FSM execution failed:', err);
           });

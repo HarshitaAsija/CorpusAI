@@ -26,6 +26,7 @@ export class FinanceAgent {
     requestedAmount: number,
     justification: string,
     policyDoc: string,
+    precedentContext?: string,
     retries = 3
   ): Promise<FinanceResponse> {
     const prompt = `You are the Finance Lead for our company. You enforce budget policy stringently.
@@ -33,7 +34,7 @@ Here is the current corporate budget policy:
 ====================
 ${policyDoc}
 ====================
-
+${precedentContext ? `\nSimilar past decisions from company memory (Cognee Knowledge Graph):\n====================\n${precedentContext}\n====================\nUse these precedents to inform your reasoning and cite them if relevant.\n` : ''}
 A request has been submitted for budget:
 - Requested Amount: $${requestedAmount}
 - Justification: "${justification}"
@@ -41,7 +42,7 @@ A request has been submitted for budget:
 Evaluate this request.
 - If it is under $5,000, you should 'approve' it.
 - If it is between $5,000 and $10,000, it is a soft threshold and requires a strong, solid justification.
-  - If the justification is reasonable, you may 'approve'.
+  - If the justification is reasonable (or supported by past precedent), you may 'approve'.
   - If the justification seems weak, you should 'counter' with a lower amount (typically $5,000) and explain why.
 - If it is over $10,000, it is a hard threshold. You must 'reject' or 'counter' with a maximum of $5,000.
 

@@ -1,65 +1,89 @@
-import { NotionClientWrapper } from './notion/client';
+import { cogneeClient } from './memory/cogneeClient';
 
 export interface RiskAssessment {
   risk: 'Low' | 'Medium' | 'High';
   reason: string;
+  matchedVia?: 'rule_based' | 'cognee_graph' | 'cognee_rag' | 'fallback';
 }
 
 export class AdaptiveAutonomyEngine {
-  private notion: NotionClientWrapper;
+  private storage: any;
 
-  constructor(notion: NotionClientWrapper) {
-    this.notion = notion;
+  constructor(storage: any) {
+    this.storage = storage;
   }
 
   /**
-   * Assesses the risk of a new decision based on historical approvals.
-   * If a similar approved decision is found (within 15% amount variance),
-   * the risk is Low, allowing auto-approval.
+   * Assesses the risk of a new decision based on historical approvals and Cognee memory.
+   * Fast path: 15% budget variance against historical approvals ([RULE-BASED]).
+   * Semantic path: Cognee Knowledge Graph precedent search ([COGNEE-ASSISTED]).
    */
-  async assessRisk(amount: number, category: string): Promise<RiskAssessment> {
+  async assessRisk(amount: number, category: string, justification = ''): Promise<RiskAssessment> {
     console.log(`[Autonomy Engine] Assessing risk for amount $${amount} (Category: ${category})...`);
 
     try {
-      // Query recently approved decisions
-      const approvedDecisions = await this.notion.getRecentApprovedDecisions();
+      // 1. Fast-path: check recently approved decisions in storage
+      const approvedDecisions = await this.storage.getRecentApprovedDecisions();
       console.log(`[Autonomy Engine] Found ${approvedDecisions.length} historical approved decisions to evaluate.`);
 
-      if (approvedDecisions.length === 0) {
-        return {
-          risk: 'High',
-          reason: 'No historical approved decisions exist yet.'
-        };
+      if (approvedDecisions.length > 0) {
+        for (const dec of approvedDecisions) {
+          const histAmount = dec.amount;
+          if (histAmount > 0) {
+            const variance = Math.abs(histAmount - amount) / histAmount;
+            if (variance <= 0.15) {
+              const percentage = (variance * 100).toFixed(1);
+              const reason = `[RULE-BASED] Auto-approved under established policy. Matches approved decision "${dec.title}" ($${histAmount}) within ${percentage}% variance (threshold is 15%).`;
+              console.log(`[Autonomy Engine] Rule match found! ${reason}`);
+              return {
+                risk: 'Low',
+                reason,
+                matchedVia: 'rule_based'
+              };
+            }
+          }
+        }
       }
 
-      // Check for a match within 15% budget variance
-      for (const dec of approvedDecisions) {
-        const histAmount = dec.amount;
-        const variance = Math.abs(histAmount - amount) / histAmount;
+      // 2. Semantic-path: Query Cognee Knowledge Graph memory for precedent
+      console.log(`[Autonomy Engine] No direct 15% variance match. Consulting Cognee Knowledge Graph memory...`);
+      const precedentResult = await cogneeClient.queryPrecedent(amount, justification, category);
 
-        if (variance <= 0.15) {
-          const percentage = (variance * 100).toFixed(1);
-          const reason = `Auto-approved under established policy. Matches approved decision "${dec.title}" ($${histAmount}) within ${percentage}% variance (threshold is 15%).`;
-          
-          console.log(`[Autonomy Engine] Match found! ${reason}`);
+      if (precedentResult.available && precedentResult.precedents.length > 0) {
+        if (amount <= 8000) {
+          const reason = `[COGNEE-ASSISTED] Auto-approved via Cognee semantic memory: Historical precedent found in knowledge graph for ${category} budget request. Precedent context: ${precedentResult.summary}`;
+          console.log(`[Autonomy Engine] Cognee match approved! ${reason}`);
           return {
             risk: 'Low',
-            reason
+            reason,
+            matchedVia: precedentResult.matchedVia === 'cognee_graph' ? 'cognee_graph' : 'cognee_rag'
+          };
+        } else {
+          const reason = `[COGNEE-ASSISTED] Cognee knowledge graph precedent retrieved (${precedentResult.summary}), but amount ($${amount}) exceeds autonomous threshold. Requiring human sign-off.`;
+          console.log(`[Autonomy Engine] Cognee precedent retrieved with Medium risk: ${reason}`);
+          return {
+            risk: 'Medium',
+            reason,
+            matchedVia: precedentResult.matchedVia === 'cognee_graph' ? 'cognee_graph' : 'cognee_rag'
           };
         }
       }
 
+      // 3. Fallback: standard rule-based default
       return {
         risk: 'Medium',
-        reason: `No matching approved decision found within 15% budget variance of $${amount}.`
+        reason: `[RULE-BASED] No matching approved decision found within 15% budget variance of $${amount}.`,
+        matchedVia: 'rule_based'
       };
 
     } catch (error) {
       console.error('[Autonomy Engine] Failed to assess risk, defaulting to High risk:', error);
       return {
         risk: 'High',
-        reason: `Autonomy engine assessment error: ${error instanceof Error ? error.message : String(error)}`
+        reason: `[RULE-BASED] Autonomy engine assessment fallback: ${error instanceof Error ? error.message : String(error)}`,
+        matchedVia: 'fallback'
       };
     }
   }
 }
+

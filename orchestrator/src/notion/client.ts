@@ -23,7 +23,9 @@ function truncateText(text: string, maxLength = 1995): string {
   return text;
 }
 
-export class NotionClientWrapper {
+import { IStorageClient } from '../storage/storageInterface';
+
+export class NotionClientWrapper implements IStorageClient {
   private clients: Record<AgentKey, Client>;
   private dbIdMap: Record<string, string> = {};
 
@@ -50,7 +52,7 @@ export class NotionClientWrapper {
     if (policyId) this.dbIdMap[policyId] = 'policy_page';
   }
 
-  private checkPermission(agent: AgentKey, targetId: string, actionDescription: string): void {
+  checkPermission(agent: AgentKey, targetId: string, actionDescription: string): void {
     const cleanTargetId = targetId.replace(/-/g, '').toLowerCase();
     const resourceType = this.dbIdMap[cleanTargetId];
 

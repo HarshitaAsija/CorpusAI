@@ -1,4 +1,6 @@
-import { NotionClientWrapper } from './notion/client';
+import { IStorageClient } from './storage/storageInterface';
+import { getStorageClient } from './storage';
+import { cogneeClient } from './memory/cogneeClient';
 import { FSMState, Initiative, Decision } from './types';
 import { MarketingAgent, CampaignProposal } from './agents/marketingAgent';
 import { FinanceAgent } from './agents/financeAgent';
@@ -12,16 +14,16 @@ import { postSlackMessage } from './integrations/slack';
 export const processingInitiatives = new Map<string, boolean>();
 
 export class OrchestratorFSM {
-  private notion: NotionClientWrapper;
+  private notion: IStorageClient;
   private marketing: MarketingAgent;
   private finance: FinanceAgent;
   private engineering: EngineeringAgent;
   private autonomy: AdaptiveAutonomyEngine;
   private onEvent?: (event: any) => void;
 
-  constructor(onEvent?: (event: any) => void) {
+  constructor(onEvent?: (event: any) => void, storage?: IStorageClient) {
     this.onEvent = onEvent;
-    this.notion = new NotionClientWrapper();
+    this.notion = storage || getStorageClient();
 
     // Intercept createAgentLog to broadcast websocket event
     const originalCreateAgentLog = this.notion.createAgentLog.bind(this.notion);
@@ -156,11 +158,20 @@ export class OrchestratorFSM {
     console.log('[FSM] Fetching Policy Page for Finance Agent...');
     const policyDoc = await this.notion.readPolicyPage();
     
+    // 3. Query Cognee for precedent and Evaluate Budget Request with Finance
+    console.log('[FSM] Querying Cognee Knowledge Graph for historical precedent...');
+    const precedentResult = await cogneeClient.queryPrecedent(
+      proposal.budgetRequest.amount,
+      proposal.budgetRequest.justification,
+      'marketing'
+    );
+
     console.log('[FSM] Contacting Finance Agent to review budget...');
     const evaluation = await this.finance.evaluateBudget(
       proposal.budgetRequest.amount,
       proposal.budgetRequest.justification,
-      policyDoc
+      policyDoc,
+      precedentResult.available ? precedentResult.summary : undefined
     );
 
     console.log(`[FSM] Finance decision: ${evaluation.decision}. Reason: ${evaluation.reason}`);
@@ -224,7 +235,8 @@ export class OrchestratorFSM {
         const finalEvaluation = await this.finance.evaluateBudget(
           marketingNeg.revisedBudget.amount,
           marketingNeg.revisedBudget.justification,
-          policyDoc
+          policyDoc,
+          precedentResult.available ? precedentResult.summary : undefined
         );
 
         console.log(`[FSM] Finance final evaluation: ${finalEvaluation.decision}. Reason: ${finalEvaluation.reason}`);
@@ -278,8 +290,8 @@ export class OrchestratorFSM {
       });
     }
 
-    // 5. Evaluate risk using Adaptive Autonomy Engine
-    const autonomyResult = await this.autonomy.assessRisk(finalAmount, 'marketing');
+    // 5. Evaluate risk using Adaptive Autonomy Engine (Rule-based fast path + Cognee semantic precedent)
+    const autonomyResult = await this.autonomy.assessRisk(finalAmount, 'marketing', finalReasoning);
     
     if (autonomyResult.risk === 'Low') {
       // Flagship differentiator: Auto-Approve Low Risk
@@ -303,7 +315,12 @@ export class OrchestratorFSM {
         initiativeId: initiative.id
       });
       
-      // Update Decision in Notion to Approved directly
+      // Ingest into Cognee memory asynchronously
+      cogneeClient.ingestDecision(decision, initiative).catch((err) =>
+        console.warn(`[Cognee] Auto-approved decision ingest warning: ${err.message}`)
+      );
+
+      // Update Decision in Storage to Approved directly
       await this.notion.updateDecisionStatus(decision.id!, 'Approved', 'Autonomy Engine');
 
       // Update initiative status to Executing and proceed
@@ -316,10 +333,10 @@ export class OrchestratorFSM {
       });
 
     } else {
-      // Create Pending Decision card in Notion Decisions DB for Human sign-off
+      // Create Pending Decision card in Storage Decisions table for Human sign-off
       console.log(`[FSM] Adaptive Autonomy Engine returned ${autonomyResult.risk} risk. Creating Decision card and pausing for human approval.`);
       
-      await this.notion.createDecision('marketing', {
+      const pendingDecision = await this.notion.createDecision('marketing', {
         title: `Approve $${finalAmount} Campaign Budget`,
         requestedBy: 'Marketing',
         amount: finalAmount,
@@ -327,8 +344,56 @@ export class OrchestratorFSM {
         initiativeId: initiative.id
       });
 
+      // If APPROVAL_BACKEND is n8n, trigger the enterprise approval workflow
+      if (process.env.APPROVAL_BACKEND === 'n8n') {
+        await this.dispatchN8nApprovalWebhook(initiative, pendingDecision);
+      }
+
       // Update Initiative to Awaiting Approval
       await this.notion.updateInitiativeStatus(initiative.id, 'Awaiting Approval', `Pending human approval for budget $${finalAmount}`);
+    }
+  }
+
+  /**
+   * Dispatches an approval request to an n8n webhook workflow for human sign-off via Slack/Email.
+   */
+  private async dispatchN8nApprovalWebhook(initiative: Initiative, decision: Decision): Promise<void> {
+    const webhookUrl = process.env.N8N_APPROVAL_WEBHOOK_URL;
+    if (!webhookUrl) {
+      console.warn('[FSM] APPROVAL_BACKEND is set to n8n, but N8N_APPROVAL_WEBHOOK_URL is not configured.');
+      return;
+    }
+
+    try {
+      console.log(`[FSM] Dispatching human approval request to n8n webhook: ${webhookUrl}`);
+      const payload = {
+        decisionId: decision.id,
+        initiativeId: initiative.id,
+        title: decision.title,
+        amount: decision.amount,
+        requestedBy: decision.requestedBy,
+        reasoningSummary: decision.reasoningSummary,
+        callbackUrl: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/webhooks/approval`,
+        secret: process.env.WEBHOOK_SHARED_SECRET || ''
+      };
+
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      console.log(`[FSM] n8n approval webhook dispatch responded with status: ${res.status}`);
+      await this.notion.createAgentLog('orchestrator', {
+        agent: 'Orchestrator',
+        eventType: 'Action',
+        summary: `Dispatched approval workflow to n8n`,
+        reasoning: `Sent decision payload ($${decision.amount}) to n8n webhook for human sign-off via Slack/Email.`,
+        initiativeId: initiative.id
+      });
+    } catch (err: any) {
+      console.error(`[FSM] Failed to dispatch n8n approval webhook: ${err.message}`);
     }
   }
 
@@ -350,16 +415,21 @@ export class OrchestratorFSM {
 
     // Check if any decision has been approved
     const approvedDecisions = await this.notion.getRecentApprovedDecisions();
-    const isApproved = approvedDecisions.some(d => d.initiativeId === initiative.id);
+    const approvedDecision = approvedDecisions.find(d => d.initiativeId === initiative.id);
 
-    if (isApproved) {
+    if (approvedDecision) {
       console.log(`[FSM] Found Approved decision for Initiative: ${initiative.id}. Transitioning to Executing.`);
       
+      // Ingest approved decision into Cognee memory
+      cogneeClient.ingestDecision(approvedDecision, initiative).catch((err) =>
+        console.warn(`[Cognee] Approved decision ingest warning: ${err.message}`)
+      );
+
       await this.notion.createAgentLog('orchestrator', {
         agent: 'Orchestrator',
         eventType: 'Resolution',
         summary: 'Human approved initiative budget',
-        reasoning: 'Decision card approved by human in Notion. Initiating execution of actions.',
+        reasoning: 'Decision card approved by human in Storage. Initiating execution of actions.',
         initiativeId: initiative.id
       });
 
