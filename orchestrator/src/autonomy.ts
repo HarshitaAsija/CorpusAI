@@ -3,7 +3,8 @@ import { cogneeClient } from './memory/cogneeClient';
 export interface RiskAssessment {
   risk: 'Low' | 'Medium' | 'High';
   reason: string;
-  matchedVia?: 'rule_based' | 'cognee_graph' | 'cognee_rag' | 'fallback';
+  matchedVia?: 'rule_based' | 'cognee_graph' | 'cognee_rag' | 'cognee_hybrid' | 'fallback' | 'none';
+  relevanceScore?: number;
 }
 
 export class AdaptiveAutonomyEngine {
@@ -16,7 +17,7 @@ export class AdaptiveAutonomyEngine {
   /**
    * Assesses the risk of a new decision based on historical approvals and Cognee memory.
    * Fast path: 15% budget variance against historical approvals ([RULE-BASED]).
-   * Semantic path: Cognee Knowledge Graph precedent search ([COGNEE-ASSISTED]).
+   * Semantic path: Cognee Knowledge Graph precedent search ([COGNEE-ASSISTED]) with match quality thresholding.
    */
   async assessRisk(amount: number, category: string, justification = ''): Promise<RiskAssessment> {
     console.log(`[Autonomy Engine] Assessing risk for amount $${amount} (Category: ${category})...`);
@@ -50,21 +51,38 @@ export class AdaptiveAutonomyEngine {
       const precedentResult = await cogneeClient.queryPrecedent(amount, justification, category);
 
       if (precedentResult.available && precedentResult.precedents.length > 0) {
-        if (amount <= 8000) {
-          const reason = `[COGNEE-ASSISTED] Auto-approved via Cognee semantic memory: Historical precedent found in knowledge graph for ${category} budget request. Precedent context: ${precedentResult.summary}`;
-          console.log(`[Autonomy Engine] Cognee match approved! ${reason}`);
+        const scoreLabel = precedentResult.relevanceScore.toFixed(2);
+        const confidenceLabel = precedentResult.confidence;
+
+        // Auto-approve ONLY if amount <= $8000 AND precedent match is strong (score >= 0.70 / High Confidence)
+        if (amount <= 8000 && (precedentResult.relevanceScore >= 0.70 || precedentResult.confidence === 'High')) {
+          const reason = `[COGNEE-ASSISTED] Match Score: ${scoreLabel}/1.0 (${confidenceLabel} Confidence). Auto-approved via Cognee semantic memory: Historical precedent found in knowledge graph for ${category} budget request. Precedent context: ${precedentResult.summary}`;
+          console.log(`[Autonomy Engine] Cognee high-confidence match approved! ${reason}`);
           return {
             risk: 'Low',
             reason,
-            matchedVia: precedentResult.matchedVia === 'cognee_graph' ? 'cognee_graph' : 'cognee_rag'
+            matchedVia: precedentResult.matchedVia,
+            relevanceScore: precedentResult.relevanceScore
           };
-        } else {
-          const reason = `[COGNEE-ASSISTED] Cognee knowledge graph precedent retrieved (${precedentResult.summary}), but amount ($${amount}) exceeds autonomous threshold. Requiring human sign-off.`;
-          console.log(`[Autonomy Engine] Cognee precedent retrieved with Medium risk: ${reason}`);
+        } else if (amount <= 8000) {
+          // Amount is low but precedent score is inadequate (< 0.70)
+          const reason = `[COGNEE-ASSISTED] Match Score: ${scoreLabel}/1.0 (${confidenceLabel} Confidence). Precedent match score is below semantic auto-approval threshold (0.70). Requiring human sign-off despite amount ($${amount}) being below ceiling. Context: ${precedentResult.summary}`;
+          console.log(`[Autonomy Engine] Cognee low-confidence match rejected for auto-approval: ${reason}`);
           return {
             risk: 'Medium',
             reason,
-            matchedVia: precedentResult.matchedVia === 'cognee_graph' ? 'cognee_graph' : 'cognee_rag'
+            matchedVia: precedentResult.matchedVia,
+            relevanceScore: precedentResult.relevanceScore
+          };
+        } else {
+          // Precedent found but amount exceeds autonomous dollar ceiling ($8000)
+          const reason = `[COGNEE-ASSISTED] Match Score: ${scoreLabel}/1.0 (${confidenceLabel} Confidence). Cognee knowledge graph precedent retrieved (${precedentResult.summary}), but requested amount ($${amount}) exceeds autonomous dollar threshold ($8000). Requiring human sign-off.`;
+          console.log(`[Autonomy Engine] Cognee precedent retrieved with Medium risk due to budget ceiling: ${reason}`);
+          return {
+            risk: 'Medium',
+            reason,
+            matchedVia: precedentResult.matchedVia,
+            relevanceScore: precedentResult.relevanceScore
           };
         }
       }
@@ -86,4 +104,3 @@ export class AdaptiveAutonomyEngine {
     }
   }
 }
-

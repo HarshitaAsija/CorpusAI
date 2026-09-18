@@ -51,7 +51,10 @@ const fsm = new OrchestratorFSM((event) => {
  */
 app.get('/api/config', (req, res) => {
   return res.status(200).json({
-    parentPageId: process.env.NOTION_PARENT_PAGE_ID || ''
+    parentPageId: process.env.NOTION_PARENT_PAGE_ID || '',
+    storageBackend: (process.env.STORAGE_BACKEND || 'notion').toLowerCase(),
+    approvalBackend: (process.env.APPROVAL_BACKEND || 'notion').toLowerCase(),
+    cogneeEnabled: process.env.COGNEE_ENABLED === 'true' || Boolean(process.env.COGNEE_API_KEY)
   });
 });
 

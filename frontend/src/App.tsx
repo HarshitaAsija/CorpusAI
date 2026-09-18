@@ -53,6 +53,15 @@ export default function App() {
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [activeInitiativeId, setActiveInitiativeId] = useState<string | null>(null);
   const [parentPageId, setParentPageId] = useState<string>('');
+  const [backendConfig, setBackendConfig] = useState<{
+    storageBackend: string;
+    approvalBackend: string;
+    cogneeEnabled: boolean;
+  }>({
+    storageBackend: 'notion',
+    approvalBackend: 'notion',
+    cogneeEnabled: false
+  });
   const [graphData, setGraphData] = useState<any>(null);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   
@@ -76,16 +85,21 @@ export default function App() {
     }
   }, [logs]);
 
-  // Fetch Parent Page ID configuration
+  // Fetch Parent Page ID & Backend configuration
   const fetchConfig = async () => {
     try {
       const res = await fetch(`${API_URL}/api/config`);
       if (res.ok) {
         const data = await res.json();
         setParentPageId(data.parentPageId || '');
+        setBackendConfig({
+          storageBackend: data.storageBackend || 'notion',
+          approvalBackend: data.approvalBackend || 'notion',
+          cogneeEnabled: Boolean(data.cogneeEnabled)
+        });
       }
     } catch (err) {
-      console.error('Failed to fetch parent page ID:', err);
+      console.error('Failed to fetch config:', err);
     }
   };
 
@@ -288,7 +302,52 @@ export default function App() {
             <h1>CorpusAI</h1>
             <p>Multi-Agent Corporation Orchestrator Dashboard</p>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Active Engine Badges for Demo Credibility */}
+            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginRight: '0.5rem' }}>
+              <span style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '0.2rem 0.55rem',
+                borderRadius: '6px',
+                background: 'rgba(99, 102, 241, 0.12)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                color: '#818cf8',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em'
+              }}>
+                Storage: {backendConfig.storageBackend}
+              </span>
+              <span style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '0.2rem 0.55rem',
+                borderRadius: '6px',
+                background: 'rgba(168, 85, 247, 0.12)',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                color: '#c084fc',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em'
+              }}>
+                Approval: {backendConfig.approvalBackend}
+              </span>
+              {backendConfig.cogneeEnabled && (
+                <span style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  padding: '0.2rem 0.55rem',
+                  borderRadius: '6px',
+                  background: 'rgba(34, 197, 94, 0.12)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  color: '#4ade80',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em'
+                }}>
+                  Memory: Cognee
+                </span>
+              )}
+            </div>
+
             <button 
               className="notion-link-btn"
               onClick={() => {

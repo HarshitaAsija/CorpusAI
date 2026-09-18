@@ -1,0 +1,109 @@
+{
+  "name": "CorpusAI Enterprise Human Approval Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "corpusai-approval",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "1a2b3c4d-0001-4000-8000-000000000001",
+      "name": "Webhook Trigger (CorpusAI)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": "corpusai-approval"
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "post",
+        "channel": "={{ $json.body.slackChannel || process.env.SLACK_CHANNEL_ID || 'general' }}",
+        "text": "=⚠️ *Human Approval Required for Initiative Decision*\n*Title*: {{ $json.body.title }}\n*Amount*: ${{ $json.body.amount }}\n*Requested By*: {{ $json.body.requestedBy }}\n*Justification*: {{ $json.body.reasoningSummary }}\n*Decision ID*: `{{ $json.body.decisionId }}`\n*Initiative ID*: `{{ $json.body.initiativeId }}`",
+        "otherOptions": {}
+      },
+      "id": "1a2b3c4d-0002-4000-8000-000000000002",
+      "name": "Post Slack Approval Request",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-cred-id",
+          "name": "Slack Bot Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $node[\"Webhook Trigger (CorpusAI)\"].json.body.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-webhook-secret",
+              "value": "={{ $node[\"Webhook Trigger (CorpusAI)\"].json.body.secret }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"decisionId\": \"{{ $node[\"Webhook Trigger (CorpusAI)\"].json.body.decisionId }}\",\n  \"initiativeId\": \"{{ $node[\"Webhook Trigger (CorpusAI)\"].json.body.initiativeId }}\",\n  \"status\": \"Approved\",\n  \"decidedBy\": \"Human Manager (via n8n Approval Workflow)\"\n}",
+        "options": {}
+      },
+      "id": "1a2b3c4d-0003-4000-8000-000000000003",
+      "name": "HTTP Callback to CorpusAI Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        710,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger (CorpusAI)": {
+      "main": [
+        [
+          {
+            "node": "Post Slack Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Slack Approval Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Callback to CorpusAI Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1a2b3c4d-0000-4000-8000-000000000000",
+  "meta": {
+    "templateId": "corpusai-approval"
+  }
+}
