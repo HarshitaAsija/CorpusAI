@@ -46,6 +46,26 @@ const fsm = new OrchestratorFSM((event) => {
 }, storage);
 
 /**
+ * GET /
+ * Root health check status route for Render deployment & browser inspection.
+ */
+app.get('/', (req, res) => {
+  return res.status(200).json({
+    status: 'online',
+    service: 'CorpusAI Orchestrator API',
+    version: '1.0.0',
+    documentation: 'https://github.com/HarshitaAsija/CorpusAI',
+    endpoints: {
+      config: '/api/config',
+      initiatives: '/api/initiatives',
+      decisions: '/api/decisions',
+      actions: '/api/actions',
+      analytics: '/api/analytics'
+    }
+  });
+});
+
+/**
  * GET /api/config
  * Fetch environment configuration for the frontend dashboard.
  */
