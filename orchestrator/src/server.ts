@@ -172,21 +172,65 @@ app.get('/api/analytics', async (req, res) => {
     const initiativesWithLogs = new Set(logs.map(l => l.initiativeId).filter(Boolean)).size || (totalInitiatives > 0 ? totalInitiatives : 1);
     const averageRounds = Math.max(1, Math.round((negotiationLogs.length / initiativesWithLogs) + 1));
 
-    // Agent metrics calculated from real agent logs
+    // Agent metrics calculated from real agent logs & timestamp diffs
     const agents = ['marketing', 'finance', 'engineering'] as const;
     const agentMetrics: Record<string, { avgResponseMs: number; successCount: number }> = {
-      marketing: { avgResponseMs: 420, successCount: 0 },
-      finance: { avgResponseMs: 380, successCount: 0 },
-      engineering: { avgResponseMs: 490, successCount: 0 },
+      marketing: { avgResponseMs: 0, successCount: 0 },
+      finance: { avgResponseMs: 0, successCount: 0 },
+      engineering: { avgResponseMs: 0, successCount: 0 },
     };
+
+    // Group logs by initiativeId to diff consecutive timestamps per agent
+    const initiativeLogsMap = new Map<string, typeof logs>();
+    for (const log of logs) {
+      if (!log.initiativeId) continue;
+      const existing = initiativeLogsMap.get(log.initiativeId) || [];
+      existing.push(log);
+      initiativeLogsMap.set(log.initiativeId, existing);
+    }
+
+    const agentLatencies: Record<string, number[]> = {
+      marketing: [],
+      finance: [],
+      engineering: []
+    };
+
+    for (const [_, initLogs] of initiativeLogsMap.entries()) {
+      // Sort logs by timestamp ascending
+      initLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      for (let i = 1; i < initLogs.length; i++) {
+        const currentLog = initLogs[i];
+        const prevLog = initLogs[i - 1];
+        const agentKey = currentLog.agent.toLowerCase();
+
+        if (agents.includes(agentKey as any)) {
+          const tCurrent = new Date(currentLog.timestamp).getTime();
+          const tPrev = new Date(prevLog.timestamp).getTime();
+          const diffMs = tCurrent - tPrev;
+
+          // Only aggregate valid positive latency diffs (capped at 10m to exclude multi-day pauses)
+          if (!isNaN(diffMs) && diffMs >= 0 && diffMs <= 600000) {
+            agentLatencies[agentKey].push(diffMs);
+          }
+        }
+      }
+    }
 
     for (const agent of agents) {
       const agentLogs = logs.filter(l => l.agent.toLowerCase() === agent);
       const successes = agentLogs.filter(l => l.eventType !== 'Error').length;
       agentMetrics[agent].successCount = successes;
 
-      if (agentLogs.length > 0) {
-        agentMetrics[agent].avgResponseMs = 350 + (agentLogs.length % 5) * 30;
+      const latencies = agentLatencies[agent];
+      if (latencies.length > 0) {
+        const sumMs = latencies.reduce((acc, val) => acc + val, 0);
+        agentMetrics[agent].avgResponseMs = Math.round(sumMs / latencies.length);
+      } else if (agentLogs.length > 0) {
+        // Fallback baseline for single-log cases or identical timestamps
+        agentMetrics[agent].avgResponseMs = 250;
+      } else {
+        agentMetrics[agent].avgResponseMs = 0;
       }
     }
 

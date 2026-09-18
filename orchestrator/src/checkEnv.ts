@@ -78,6 +78,14 @@ export function checkEnv(mode: 'setup' | 'server'): void {
         console.warn('\x1b[33m[WARN] COGNEE_ENABLED is "true", but COGNEE_API_KEY is not set.\x1b[0m');
       }
     }
+
+    // Check placeholder integration tokens and warn explicitly
+    if (process.env.GITHUB_TOKEN?.startsWith('ghp_placeholder')) {
+      console.warn('\x1b[33m[WARN] GITHUB_TOKEN is using placeholder value "ghp_placeholder...". Real GitHub issue creation will fall back to dummy mock links.\x1b[0m');
+    }
+    if (process.env.SLACK_BOT_TOKEN?.startsWith('xoxb-placeholder')) {
+      console.warn('\x1b[33m[WARN] SLACK_BOT_TOKEN is using placeholder value "xoxb-placeholder...". Real Slack announcements will fall back to dummy mock links.\x1b[0m');
+    }
   }
 
   if (missingKeys.length > 0) {
