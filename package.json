@@ -1,0 +1,10 @@
+{
+  "name": "corpus-ai-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix orchestrator",
+    "postinstall": "npm run build --prefix orchestrator",
+    "start": "npm start --prefix orchestrator"
+  }
+}
