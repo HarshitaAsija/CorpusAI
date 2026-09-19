@@ -11,14 +11,36 @@ interface LineageGraphProps {
   activeStatus?: string;
 }
 
+const DEFAULT_GRAPH_DATA: GraphData = {
+  nodes: [
+    { id: 'orchestrator', label: 'Orchestrator FSM' },
+    { id: 'marketing', label: 'Marketing Agent' },
+    { id: 'finance', label: 'Finance Agent' },
+    { id: 'engineering', label: 'Engineering Agent' },
+    { id: 'github', label: 'GitHub API' },
+    { id: 'slack', label: 'Slack API' }
+  ],
+  edges: [
+    { from: 'orchestrator', to: 'marketing', label: '1. Draft Proposal' },
+    { from: 'marketing', to: 'finance', label: '2. Budget Review' },
+    { from: 'finance', to: 'orchestrator', label: '3. Policy Check' },
+    { from: 'orchestrator', to: 'engineering', label: '4. Execute Tasks' },
+    { from: 'engineering', to: 'github', label: '5. Create Issue' },
+    { from: 'engineering', to: 'slack', label: '6. Post Notice' }
+  ]
+};
+
 const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    if (!data || !svgRef.current) return;
+    if (!svgRef.current) return;
+
+    // Use provided graph data if available, otherwise use complete topology fallback
+    const activeData = (data && data.nodes && data.nodes.length > 0) ? data : DEFAULT_GRAPH_DATA;
     
     const container = svgRef.current.parentElement;
-    const width = container ? container.clientWidth : 700;
+    const width = container && container.clientWidth > 0 ? container.clientWidth : 700;
     const height = 420;
 
     const svg = d3.select(svgRef.current);
@@ -67,14 +89,15 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
       grad.append('stop').attr('offset', '100%').attr('stop-color', colors[1]);
     });
 
-    // --- Data Preparation ---
-    const d3Links = data.edges.map(e => ({
-      source: e.from,
-      target: e.to,
+    // --- Data Preparation (Deep clone nodes & edges so D3 force simulation doesn't mutate props) ---
+    const nodes = activeData.nodes.map(n => ({ id: n.id, label: n.label }));
+    const d3Links = activeData.edges.map(e => ({
+      source: typeof e.from === 'object' ? (e.from as any).id : e.from,
+      target: typeof e.to === 'object' ? (e.to as any).id : e.to,
       label: e.label
     }));
 
-    const simulation = d3.forceSimulation(data.nodes as any)
+    const simulation = d3.forceSimulation(nodes as any)
       .force('link', d3.forceLink(d3Links).id((d: any) => d.id).distance(180))
       .force('charge', d3.forceManyBody().strength(-350))
       .force('center', d3.forceCenter(width / 2, height / 2))
@@ -187,7 +210,7 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
     // --- Nodes ---
     const node = svg.append('g')
       .selectAll('g.node')
-      .data(data.nodes as any)
+      .data(nodes as any)
       .enter()
       .append('g')
       .attr('class', 'node')
@@ -218,25 +241,25 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
 
     // Node label
     node.append('text')
+      .text((d: any) => d.label || d.id)
+      .attr('dy', 36)
       .attr('text-anchor', 'middle')
-      .attr('dy', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 40 : 34)
-      .style('font-size', '0.8rem')
-      .style('font-weight', '700')
-      .style('fill', 'var(--text-primary)')
-      .style('text-shadow', '0 2px 6px rgba(0,0,0,0.9)')
-      .style('letter-spacing', '0.02em')
-      .text((d: any) => d.label);
+      .attr('fill', '#e2e8f0')
+      .attr('font-size', '0.75rem')
+      .attr('font-weight', '500')
+      .style('pointer-events', 'none')
+      .style('text-shadow', '0 2px 4px rgba(0,0,0,0.8)');
 
-    // --- Animated pulse ring ---
+    // Continuous pulse ring animation for active nodes
     function animatePulse() {
-      node.selectAll('.pulse-ring')
-        .filter((_d: any, i: any, nodes: any) => {
-          const d = d3.select(nodes[i]).datum() as any;
-          return getIsActiveAgent(d.id, activeStatus);
-        })
+      svg.selectAll('circle.pulse-ring')
+        .filter((d: any) => getIsActiveAgent(d.id, activeStatus))
+        .attr('r', 28)
+        .attr('opacity', 0.8)
         .transition()
-        .duration(1500)
-        .attr('r', 38)
+        .duration(1200)
+        .ease(d3.easeCubicOut)
+        .attr('r', 44)
         .attr('opacity', 0)
         .transition()
         .duration(0)
@@ -248,16 +271,19 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
 
     // --- Simulation tick ---
     simulation.on('tick', () => {
-      const pathStr = (d: any) => `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`;
+      const pathStr = (d: any) => {
+        if (!d.source || !d.target) return '';
+        return `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`;
+      };
       link.attr('d', pathStr);
       linkHitArea.attr('d', pathStr);
 
       particles
-        .attr('cx', (d: any) => d.source.x + d.t * (d.target.x - d.source.x))
-        .attr('cy', (d: any) => d.source.y + d.t * (d.target.y - d.source.y))
+        .attr('cx', (d: any) => (d.source && d.target) ? (d.source.x + d.t * (d.target.x - d.source.x)) : 0)
+        .attr('cy', (d: any) => (d.source && d.target) ? (d.source.y + d.t * (d.target.y - d.source.y)) : 0)
         .each(function(d: any) { d.t = (d.t + 0.006) % 1.0; });
 
-      node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      node.attr('transform', (d: any) => `translate(${d.x || 0},${d.y || 0})`);
     });
 
     return () => {
