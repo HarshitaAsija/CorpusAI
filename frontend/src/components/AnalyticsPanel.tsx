@@ -13,7 +13,7 @@ interface AnalyticsData {
   agentMetrics: Record<string, AgentMetrics>;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://corpusai-16ir.onrender.com';
 
 const AnalyticsPanel: React.FC = () => {
   const [data, setData] = useState<AnalyticsData | null>(null);

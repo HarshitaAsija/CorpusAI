@@ -74,9 +74,9 @@ export default function App() {
 
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Environment-driven API URLs (defaults to localhost for dev)
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-  const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
+  // Environment-driven API URLs (defaults to active Render backend URL)
+  const API_URL = import.meta.env.VITE_API_URL || 'https://corpusai-16ir.onrender.com';
+  const WS_URL = import.meta.env.VITE_WS_URL || 'wss://corpusai-16ir.onrender.com';
 
   // Auto-scroll terminal to bottom when new logs arrive
   useEffect(() => {
