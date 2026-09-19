@@ -10,7 +10,7 @@ export interface FinanceResponse {
 
 export class FinanceAgent {
   private openai: OpenAI;
-  private model = 'meta/llama-3.1-70b-instruct';
+ private model = process.env.NVIDIA_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct';
 
   constructor() {
     this.openai = new OpenAI({
